@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote_plus, urlparse
 
 import jwt
 from flask import Flask, abort, g, jsonify, request, send_from_directory
@@ -18,32 +20,73 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bases.db"
 JSON_PATH = BASE_DIR / "bases.json"
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    pass
+
 
 def _normalize_database_url(url: str) -> str:
-    """Supabase / Railway: postgres:// → драйвер SQLAlchemy; при необходимости sslmode."""
+    """
+    Приводим URI к драйверу pg8000 (pure Python, без компиляции C-кода).
+    Удобно для Windows и свежих версий Python (например 3.14), где нет wheel psycopg2.
+    """
     url = url.strip()
-    if url.startswith("postgres://"):
-        rest = url[len("postgres://") :]
-        url = f"postgresql+psycopg2://{rest}"
+    if url.startswith("postgresql+pg8000://"):
+        pass
+    elif url.startswith("postgres://"):
+        url = "postgresql+pg8000://" + url[len("postgres://") :]
+    elif url.startswith("postgresql+psycopg2://"):
+        url = "postgresql+pg8000://" + url[len("postgresql+psycopg2://") :]
+    elif url.startswith("postgresql+psycopg://"):
+        url = "postgresql+pg8000://" + url[len("postgresql+psycopg://") :]
     elif url.startswith("postgresql://"):
-        rest = url[len("postgresql://") :]
-        url = f"postgresql+psycopg2://{rest}"
+        url = "postgresql+pg8000://" + url[len("postgresql://") :]
     if "sslmode=" not in url and "supabase" in url.lower():
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
     return url
 
 
+def _database_uri_from_supabase_env() -> Optional[str]:
+    """
+    Собирает URI PostgreSQL из SUPABASE_URL + SUPABASE_DB_PASSWORD.
+    Пароль БД — в Dashboard → Settings → Database (не publishable / anon key).
+    """
+    raw = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+    password = os.environ.get("SUPABASE_DB_PASSWORD")
+    if not raw or not password:
+        return None
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+    host = parsed.hostname or ""
+    if not host.endswith(".supabase.co"):
+        return None
+    project_ref = host.split(".")[0]
+    user = quote_plus("postgres")
+    pw = quote_plus(password)
+    dbhost = f"db.{project_ref}.supabase.co"
+    return (
+        f"postgresql+pg8000://{user}:{pw}@{dbhost}:5432/postgres"
+        "?sslmode=require"
+    )
+
+
 def _database_uri() -> str:
-    # Supabase: Project Settings → Database → Connection string (URI)
-    # Можно задать DATABASE_URL или SUPABASE_DB_URL
+    # Явная строка (pooler или direct) из Supabase / Railway
     env_url = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
     if env_url:
         return _normalize_database_url(env_url)
+    built = _database_uri_from_supabase_env()
+    if built:
+        return built
     return f"sqlite:///{DB_PATH}"
 
 
 def _is_postgres_uri(uri: str) -> bool:
-    return "postgresql+psycopg2" in uri.lower() or "postgresql" in uri.lower()
+    return str(uri).lower().startswith("postgresql")
 
 
 _INITIAL_DB_URI = _database_uri()

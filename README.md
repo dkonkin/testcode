@@ -48,12 +48,18 @@ Dockerfile        # сборка frontend + backend в один образ
 3. В переменных окружения backend задайте одну из переменных:
    - **`DATABASE_URL`** — предпочтительно;  
    - или **`SUPABASE_DB_URL`** — то же значение.
-4. Строка может начинаться с `postgres://` или `postgresql://` — приложение приведёт её к драйверу `psycopg2` и при необходимости добавит `sslmode=require` для хостов Supabase.
+4. Строка может начинаться с `postgres://` или `postgresql://` — приложение приведёт её к драйверу **`pg8000`** (чистый Python, без Visual C++ и без `psycopg2`) и при необходимости добавит `sslmode=require` для хостов Supabase.
 5. При первом запуске **`db.create_all()`** создаст таблицы `users` и `bases`; затем выполнятся сиды (пользователи `admin`/`user` и импорт из `bases.json`, если таблицы пустые).
 
 Пример см. в `backend/.env.example`.
 
+**Важно:** URL вида `https://xxx.supabase.co` и ключ **`sb_publishable_...` (anon / publishable)** — это **не** пароль PostgreSQL. Для Flask + SQLAlchemy нужен **`Database password`** из *Settings → Database* (или полный **`DATABASE_URL`**). В репозитории можно задать в `backend/.env`: **`SUPABASE_URL`**, **`SUPABASE_ANON_KEY`** (опционально), **`SUPABASE_DB_PASSWORD`** — приложение само соберёт строку `postgresql://...@db.<ref>.supabase.co:5432/postgres` (см. `app.py`). Файл `.env` в `.gitignore`, не коммитьте пароли.
+
 Проверка: `GET /api/health` вернёт `"database": "postgres"` при подключении к PostgreSQL.
+
+### Windows, Python 3.14 и ошибка «Microsoft Visual C++»
+
+Раньше использовался **`psycopg2-binary`**, для которого под новые версии Python часто нет готового wheel — pip пытается собрать из исходников и требует MSVC. Сейчас в зависимостях **`pg8000`** (pure Python), отдельный компилятор не нужен.
 
 ## Локальная разработка
 
@@ -62,7 +68,7 @@ Dockerfile        # сборка frontend + backend в один образ
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
-# опционально: $env:DATABASE_URL="postgresql+psycopg2://..."
+# опционально: $env:DATABASE_URL="postgresql://..."
 python app.py
 ```
 
