@@ -1,94 +1,103 @@
-## Каталог баз отдыха Башкортостана
+# Каталог баз отдыха Башкортостана
 
-Простое веб-приложение для просмотра баз отдыха в Республике Башкортостан. На фронтенде — чистый HTML/CSS/JavaScript, на бэкенде — Python (Flask + SQLite). Данные хранятся в базе данных `bases.db`; при первом запуске сервер импортирует стартовый список из файла `bases.json`.
+Монорепозиторий: **backend** (Python, Flask, JWT) и **frontend** (React, TypeScript, Vite).
 
-### Структура проекта
+**База данных:** по умолчанию локально используется **SQLite** (`backend/bases.db`). Для production рекомендуется **PostgreSQL в Supabase** — задайте **`DATABASE_URL`** (или **`SUPABASE_DB_URL`**) со строкой подключения из панели Supabase.
 
-- `index.html` — основная страница приложения.
-- `styles.css` — оформление (тёмная тема, современный UI).
-- `script.js` — логика фильтрации и отрисовки карточек.
-- `bases.json` — демонстрационный список баз отдыха, который один раз импортируется в базу данных.
-- `server.py` — backend на Flask с REST‑API и SQLite.
-- `bases.db` — файл базы данных SQLite (создаётся автоматически).
-- `requirements.txt` — список Python‑зависимостей.
+## Роли
 
-### Как запустить (через Docker, рекомендовано)
+| Роль        | Возможности |
+|------------|-------------|
+| **user**   | Просмотр каталога, фильтры, карта |
+| **admin**  | То же + **админ-панель** с формой добавления баз (`POST /api/bases`) |
 
-1. Соберите образ (в папке проекта):
+При первом запуске backend создаётся два пользователя (если таблица `users` пуста):
 
-   ```powershell
-   cd C:\Users\INTAS-KonkinDI\testcode
-   docker build -t bash-bases .
-   ```
+- `admin` / `admin` — администратор  
+- `user` / `user` — только просмотр  
 
-2. Запустите контейнер:
+Задайте в production переменные **`ADMIN_PASSWORD`**, **`USER_PASSWORD`**, **`JWT_SECRET`**.
 
-   ```powershell
-   docker run --rm -p 8000:8000 bash-bases
-   ```
+## Структура
 
-   Приложение будет доступно по адресу `http://localhost:8000/`. База данных `bases.db` будет находиться внутри контейнера; при каждом новом запуске контейнера она создаётся заново и заполняется из `bases.json`.
-
-Если хотите сохранять БД между перезапусками контейнера, можно примонтировать том/папку:
-
-```powershell
-docker run --rm -p 8000:8000 -v C:\Users\INTAS-KonkinDI\testcode\data:/app/data bash-bases
+```
+backend/
+  app.py          # API, модели User + базы отдыха, раздача SPA при FRONTEND_DIST
+  wsgi.py         # gunicorn
+  bases.json      # начальные данные (импорт при пустой БД)
+  requirements.txt
+frontend/
+  src/            # React-приложение, маршруты /, /login, /admin
+  package.json
+Dockerfile        # сборка frontend + backend в один образ
 ```
 
-и поменять путь к БД в `server.py` на `/app/data/bases.db`.
+## API (кратко)
 
-### Как запустить без Docker (локальный Python)
+- `POST /api/auth/login` — `{ "username", "password" }` → `{ access_token, role, username }`
+- `GET /api/auth/me` — заголовок `Authorization: Bearer <token>`
+- `GET /api/bases` — список баз (без авторизации)
+- `POST /api/bases` — добавление базы (**только admin**, JWT обязателен)
 
-1. Установите зависимости (в PowerShell из папки проекта):
+## Supabase (PostgreSQL)
 
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
+1. Создайте проект на [supabase.com](https://supabase.com).
+2. **Project Settings → Database → Connection string → URI**  
+   - Для деплоя на Railway / serverless удобен **Transaction pooler** (порт **6543**).  
+   - Скопируйте URI и подставьте пароль БД.
+3. В переменных окружения backend задайте одну из переменных:
+   - **`DATABASE_URL`** — предпочтительно;  
+   - или **`SUPABASE_DB_URL`** — то же значение.
+4. Строка может начинаться с `postgres://` или `postgresql://` — приложение приведёт её к драйверу `psycopg2` и при необходимости добавит `sslmode=require` для хостов Supabase.
+5. При первом запуске **`db.create_all()`** создаст таблицы `users` и `bases`; затем выполнятся сиды (пользователи `admin`/`user` и импорт из `bases.json`, если таблицы пустые).
 
-2. Запустите backend‑сервер:
+Пример см. в `backend/.env.example`.
 
-   ```powershell
-   python server.py
-   ```
+Проверка: `GET /api/health` вернёт `"database": "postgres"` при подключении к PostgreSQL.
 
-   По умолчанию он стартует на `http://localhost:8000`. При первом запуске создастся файл `bases.db`, а данные из `bases.json` будут импортированы в таблицу.
+## Локальная разработка
 
-3. Откройте в браузере адрес:
+### Backend
 
-   - `http://localhost:8000/` — само приложение (каталог баз).
-   - `http://localhost:8000/api/bases` — JSON‑API со списком баз.
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+# опционально: $env:DATABASE_URL="postgresql+psycopg2://..."
+python app.py
+```
 
-Отдельный статический сервер (`python -m http.server` и т.п.) теперь не нужен — Flask сам отдаёт и фронтенд, и API.
+Без **`DATABASE_URL`** используется SQLite в каталоге `backend`.  
+API: `http://127.0.0.1:8000`  
+CORS по умолчанию: `http://localhost:5173`.
 
-### Деплой на Railway
+### Frontend
 
-Railway может автоматически собрать этот проект как **Python‑приложение** или как **Docker‑контейнер**.
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-- Вариант 1 (проще): Python‑сервис
-  1. Залогиньтесь на `https://railway.app/` и подключите репозиторий с этим проектом.
-  2. При создании сервиса выберите тип **Python** (или оставьте автоопределение).
-  3. В разделе Deploy/Settings:
-     - `Build Command`: `pip install -r requirements.txt`
-     - `Start Command`: `python server.py`
-  4. Railway сам прокинет переменную `PORT`, а `server.py` уже использует `os.environ["PORT"]`, так что ничего менять не нужно.
+Приложение: `http://localhost:5173` — запросы к `/api` проксируются на порт 8000 (см. `vite.config.ts`).
 
-- Вариант 2: Docker‑сервис
-  1. При создании сервиса выберите деплой из репозитория с включённым `Dockerfile`.
-  2. Railway соберёт образ на основе `Dockerfile` и запустит контейнер, пробрасывая переменную `PORT`.  
-     Наш `server.py` читает её, поэтому приложение поднимется на правильном порту.
+Для production-сборки с отдельным URL API задайте `VITE_API_URL` (например `https://api.example.com`).
 
-После успешного деплоя Railway выдаст URL вида `https://<имя‑проекта>.up.railway.app`, по которому будет доступен каталог баз отдыха.
+## Docker (полный стек одним образом)
 
-### Как добавлять базы через интерфейс
+```powershell
+docker build -t bash-bases .
+docker run --rm -p 8000:8000 -e DATABASE_URL="postgresql://..." -e JWT_SECRET="..." bash-bases
+```
 
-1. В верхней части страницы под фильтрами есть блок «Добавить базу отдыха».
-2. Заполните минимум:
+Откройте `http://localhost:8000` — статика React и API на одном хосте (`FRONTEND_DIST` задаётся в образе).
 
-   - название;
-   - район.
+## Railway
 
-   Остальные поля — по желанию (цены, тип размещения, опции, координаты и т.д.).
+1. Подключите репозиторий, выберите **Dockerfile** в корне.  
+2. Задайте **`DATABASE_URL`** из Supabase (или встроенный Postgres Railway — тогда URI от Railway).  
+3. Задайте **`JWT_SECRET`**, **`ADMIN_PASSWORD`**, **`USER_PASSWORD`**.  
+4. При необходимости расширьте **`CORS_ORIGINS`** (если фронт вынесен на другой домен).
 
-3. Нажмите «Добавить базу» — запись сохранится в SQLite через API (`POST /api/bases`) и сразу появится в каталоге, фильтрах и на карте.
+## Старый монолит
 
-
+Файлы `index.html` / `script.js` / `server.py` в корне удалены; логика перенесена в `frontend/` и `backend/`.
